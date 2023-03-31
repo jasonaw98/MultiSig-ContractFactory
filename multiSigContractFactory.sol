@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.18;
 
 interface IERC20 {
     function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
@@ -90,15 +90,10 @@ contract MultiSigWallet {
         emit Deposit(msg.sender, msg.value ,address(this).balance);
     }
 
-    // Direct deposit ERC Token by transfer within Metamask
-    // function depositERC20(address token, address sender, uint256 amount) public {
-    //     IERC20(token).transferFrom(sender, address(this), amount);
+    // function withdrawERC20(address token, address recipient, uint256 amount) public onlyOwner {
+    //     require(IERC20(token).balanceOf(address(this)) >= amount, "Insufficient balance");
+    //     IERC20(token).transfer(recipient, amount);
     // }
-
-    function withdrawERC20(address token, address recipient, uint256 amount) public onlyOwner {
-        require(IERC20(token).balanceOf(address(this)) >= amount, "Insufficient balance");
-        IERC20(token).transfer(recipient, amount);
-    }
 
     function balanceOfERC20(address token) public view returns(uint256) {
         return IERC20(token).balanceOf(address(this));
@@ -109,7 +104,7 @@ contract MultiSigWallet {
     }
 
     function submitTransaction(
-        address _to,
+        address payable _to,
         uint _value,
         address _tokenAddress,
         bytes memory _data
@@ -139,11 +134,11 @@ contract MultiSigWallet {
 
         emit ConfirmTransaction(msg.sender, _txIndex, transaction.numConfirmations);
         if(transaction.numConfirmations>= numConfirmationsRequired){
-        executeERC20Transaction(_txIndex);
+        executeTransaction(_txIndex);
         }
     }
 
-    function executeERC20Transaction(
+    function executeTransaction(
         uint _txIndex
     ) private onlyOwner txExists(_txIndex) notExecuted(_txIndex) {
         Transaction storage transaction = transactions[_txIndex];
@@ -163,29 +158,6 @@ contract MultiSigWallet {
         }
         require(IERC20(transaction.tokenAddr).transfer(transaction.to, transaction.value), "ERC20 Token Transfer failed");
 
-        transaction.executed = true;
-        emit ExecuteTransaction(msg.sender, _txIndex);
-    }
-
-//Does the same thing using Transfer method
-    function executeTransaction(
-        uint _txIndex
-    ) private onlyOwner txExists(_txIndex) notExecuted(_txIndex) {
-        Transaction storage transaction = transactions[_txIndex];
-
-        require(
-            transaction.numConfirmations >= numConfirmationsRequired,
-            "cannot execute tx"
-        );
-        if(transaction.tokenAddr == 0x0000000000000000000000000000000000000000){
-        address payable addr = payable (transaction.to);
-        addr.transfer(transaction.value);
-        transaction.executed = true;
-        emit ExecuteTransaction(msg.sender, _txIndex);
-        return ;
-        }
-
-        require(IERC20(transaction.tokenAddr).transfer(transaction.to, transaction.value), "ERC20 Token Transfer failed");
         transaction.executed = true;
         emit ExecuteTransaction(msg.sender, _txIndex);
     }
@@ -237,50 +209,37 @@ contract MultiSigWallet {
 }
 
 contract multiSigContractFactory {
-    event NewContractCreation(address indexed newContract);
 
-    struct NewContract {
-        address newMultisig;
+    struct NewDeployedContract {
         address[] newOwners;
         uint numReq;
     }
 
-    mapping(address => NewContract) registry;
+    mapping(address => NewDeployedContract) private registry;
 
-    NewContract[] public TotalContract;
+    mapping(address => address[]) public ownersContracts;
 
-    function createContract(address[] memory _owners, uint _threshold) public {
-
-        MultiSigWallet newContract = new MultiSigWallet(_owners, _threshold);
-        TotalContract.push(
-            NewContract({
-                newMultisig: address(newContract),
-                newOwners: _owners,
-                numReq: _threshold
-            })
-        );
-        emit NewContractCreation(address(newContract));
+    function createContract(address[] memory _owners, uint _threshold) public returns (address) {
+        MultiSigWallet newMultisig = new MultiSigWallet(_owners, _threshold);
         for (uint i = 0; i < _owners.length; i++){
-            registry[_owners[i]] = NewContract ({
-                newMultisig: address(newContract),
+            ownersContracts[_owners[i]].push(address(newMultisig));
+        }
+        registry[address(newMultisig)] = NewDeployedContract({
                 newOwners: _owners,
                 numReq: _threshold
             });
-        }
+        return address(newMultisig);
     }
 
-    function getContractCount() public view returns (uint) {
-        return TotalContract.length;
+    //use New Multisig contract addr to get Owners and Threshold
+    function getContractContents(address _index) public view returns (address[] memory, uint) {
+     NewDeployedContract storage contractInstance = registry[_index];
+     return (contractInstance.newOwners, contractInstance.numReq);
     }
 
-    function getOwnersForContract(uint _index) public view returns (address, address[] memory) {
-     NewContract storage contractInstance = TotalContract[_index];
-     return (contractInstance.newMultisig, contractInstance.newOwners);
-    }
-
-     function getOwnersContract(address addr) public view returns (NewContract memory) {
-     return (registry[addr]);
+    //use owner address and to retrieve array of contract address
+     function getOwnersContract() public view returns (address[] memory) {
+     return (ownersContracts[msg.sender]);
     }
 
 }
-
